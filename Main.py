@@ -22,7 +22,7 @@ dp = Dispatcher()
 kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="QR Code для входа"), KeyboardButton(text="QR Code для выхода")],
-        [KeyboardButton(text="Статистика студента"), KeyboardButton(text="Get ID")]
+        [KeyboardButton(text="Получить ID"), KeyboardButton(text="Статистика студента")]
     ],
     resize_keyboard=True
 )
@@ -36,6 +36,11 @@ db_file = "university.db"
 async def start(message: types.Message):
     await message.answer("Добро пожаловать! Выберите действие:", reply_markup=kb)
 
+# Обработка команды Get ID
+@dp.message(F.text == "Получить ID")
+async def get_id(message: types.Message):
+    telegram_id = message.from_user.id
+    await message.answer(f"Ваш Telegram ID: {telegram_id}")
 
 # Обработка команды Get ID
 @dp.message(F.text == "Get ID")
@@ -107,14 +112,20 @@ async def generate_exit_qr_code(message: types.Message):
         cursor.execute("UPDATE Students SET qrcode_out = ? WHERE telegramID = ?", (img_base64, telegram_id,))
         conn.commit()
 
+<<<<<<< HEAD
+        await bot.send_photo(message.chat.id, photo=FSInputFile(qr_code_path), caption = "Ваш QR-код для выхода из университета.")
+=======
         await bot.send_photo(message.chat.id, photo=FSInputFile(qr_code_path),
                              caption="Ваш QR-код для выхода из университета.")
+>>>>>>> main
     else:
         await message.answer("Вы либо не зарегистрированы, либо уже вышли из университета.")
     conn.close()
 
 
 # Сканирование QR-кода (вход или выход)
+<<<<<<< HEAD
+=======
 @dp.message(F.content_type == types.ContentType.PHOTO)
 async def scan_qr(message: types.Message):
     photo = message.photo[-1]
@@ -163,6 +174,7 @@ async def scan_qr(message: types.Message):
         await message.answer(f"Ошибка при обработке изображения: {e}")
 
 
+>>>>>>> main
 @dp.message(F.text.regexp(r"^(entry|exit)_\d+_\d+$"))
 async def process_qr_text(message: types.Message):
     try:
@@ -183,14 +195,23 @@ async def process_qr_text(message: types.Message):
         cursor.execute("SELECT * FROM Students WHERE telegramID = ?", (telegram_id,))
         user = cursor.fetchone()
 
+        if message.from_user.id != telegram_id:
+            await message.answer("Аккаунты не совпадают.")
+            return
+
         if user:
-            if action == "entry":
+            if action == "entry" and user[2] and user[4] == 0:
                 # Обновляем `time_in` и статус
+<<<<<<< HEAD
+                cursor.execute("UPDATE Students SET time_in = ?, in_university = 1 WHERE telegramID = ?", (timestamp, telegram_id))
+                cursor.execute("UPDATE Students SET qrcode_in = ? WHERE telegramID = ?", (None, telegram_id,))
+=======
                 cursor.execute("UPDATE Students SET time_in = ?, in_university = 1 WHERE telegramID = ?",
                                (timestamp, telegram_id))
+>>>>>>> main
                 conn.commit()
                 await message.answer("Ваш статус обновлен: вы вошли в университет.")
-            elif action == "exit" and user[4] == 1:  # Убедимся, что студент уже в университете
+            elif action == "exit" and user[3] and user[4] == 1:  # Убедимся, что студент уже в университете
                 # Получаем `time_in` для расчета
                 cursor.execute("SELECT time_in FROM Students WHERE telegramID = ?", (telegram_id,))
                 time_in = cursor.fetchone()[0]
@@ -223,13 +244,14 @@ async def process_qr_text(message: types.Message):
                         SET time_out = ?, in_university = 0, skipped_hours = skipped_hours + ? 
                         WHERE telegramID = ?
                     """, (timestamp, skipped_hours, telegram_id))
+                    cursor.execute("UPDATE Students SET qrcode_out = ? WHERE telegramID = ?", (None, telegram_id,))
                     conn.commit()
 
                     await message.answer(f"Ваш статус обновлен: вы вышли из университета. Пропущенные часы обновлены.")
                 else:
                     await message.answer("Ошибка: Время входа не найдено.")
             else:
-                await message.answer("Действие некорректно. Возможно, вы не находитесь в университете.")
+                await message.answer("Действие некорректно.")
         else:
             await message.answer("Пользователь не найден.")
         conn.close()
