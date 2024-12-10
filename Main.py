@@ -21,11 +21,17 @@ dp = Dispatcher()
 # Кнопки
 kb = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="Get ID"), KeyboardButton(text="Generate QR Code")],
-        [KeyboardButton(text="Exit University")]
+        [KeyboardButton(text="QR Code для входа"), KeyboardButton(text="QR Code для выхода")],
+        [KeyboardButton(text="Статистика студента"), KeyboardButton(text="Get ID")]
     ],
     resize_keyboard=True
 )
+
+# Обработка команды Get ID
+@dp.message(F.text == "Get ID")
+async def get_id(message: types.Message):
+    telegram_id = message.from_user.id
+    await message.answer(f"Ваш Telegram ID: {telegram_id}")
 
 # Подключение к базе данных
 db_file = "university.db"
@@ -35,55 +41,74 @@ db_file = "university.db"
 async def start(message: types.Message):
     await message.answer("Добро пожаловать! Выберите действие:", reply_markup=kb)
 
-# Обработка команды Get ID
-@dp.message(F.text == "Get ID")
-async def get_id(message: types.Message):
-    telegram_id = message.from_user.id
-    await message.answer(f"Ваш Telegram ID: {telegram_id}")
 
-# Генерация QR-кода с меткой времени
-@dp.message(lambda message: message.text == "Generate QR Code")
-async def generate_qr_code(message: types.Message):
+# Генерация QR-кода для входа
+@dp.message(F.text == "QR Code для входа")
+async def generate_entry_qr_code(message: types.Message):
     telegram_id = message.from_user.id
-    entry_time = int(time.time())  # Время входа в университет
+    entry_time = int(time.time())
     qr_code_path = f"qrcodes/{telegram_id}_entry.png"
 
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
-    cursor.execute(f"SELECT Students.telegramID FROM Students WHERE telegramID = {telegram_id}")
+    cursor.execute("SELECT telegramID FROM Students WHERE telegramID = ?", (telegram_id,))
     db_id = cursor.fetchone()
 
     if db_id:
-        cursor.execute("SELECT Students.qrcode_in FROM Students WHERE telegramID = ?", (telegram_id,))
-        old_qrcode = cursor.fetchone()
-        if old_qrcode and old_qrcode[0]:
-            img_data = base64.b64decode(old_qrcode[0])
-            img = Image.open(BytesIO(img_data))
-            img.save(qr_code_path)
-        else:
-            # Формируем данные для QR-кода
-            qr_data = f"{telegram_id}_{entry_time}"
-            # Создаем QR-код
-            os.makedirs("qrcodes", exist_ok=True)
-            qr = qrcode.QRCode(version=1)
-            qr.add_data(qr_data)
-            qr.make(fit=True)
+        qr_data = f"entry_{telegram_id}_{entry_time}"
+        os.makedirs("qrcodes", exist_ok=True)
+        qr = qrcode.QRCode(version=1)
+        qr.add_data(qr_data)
+        qr.make(fit=True)
 
-            img = qr.make_image(fill_color="black", back_color="white")
-            img.save(qr_code_path)
+        img = qr.make_image(fill_color="black", back_color="white")
+        img.save(qr_code_path)
 
-            buffer = BytesIO()
-            img.save(buffer, format="PNG")
-            img_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-            cursor.execute("UPDATE Students SET qrcode_in = ? WHERE telegramID = ?", (img_base64, telegram_id,))
-            conn.commit()
+        buffer = BytesIO()
+        img.save(buffer, format="PNG")
+        img_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        cursor.execute("UPDATE Students SET qrcode_in = ? WHERE telegramID = ?", (img_base64, telegram_id,))
+        conn.commit()
 
-    # Отправляем QR-код пользователю
-    await bot.send_photo(message.chat.id, photo=FSInputFile(qr_code_path), caption="Ваш QR-код для входа в университет.")
+        await bot.send_photo(message.chat.id, photo=FSInputFile(qr_code_path), caption="Ваш QR-код для входа в университет.")
+    else:
+        await message.answer("Вы не зарегистрированы в системе.")
     conn.close()
 
+# Генерация QR-кода для выхода
+@dp.message(F.text == "QR Code для выхода")
+async def generate_exit_qr_code(message: types.Message):
+    telegram_id = message.from_user.id
+    exit_time = int(time.time())
+    qr_code_path = f"qrcodes/{telegram_id}_exit.png"
 
-# Сканирование QR-кода
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+    cursor.execute("SELECT telegramID, in_university FROM Students WHERE telegramID = ?", (telegram_id,))
+    db_data = cursor.fetchone()
+
+    if db_data and db_data[1] == 1:  # Проверяем, что студент в университете
+        qr_data = f"exit_{telegram_id}_{exit_time}"
+        os.makedirs("qrcodes", exist_ok=True)
+        qr = qrcode.QRCode(version=1)
+        qr.add_data(qr_data)
+        qr.make(fit=True)
+
+        img = qr.make_image(fill_color="black", back_color="white")
+        img.save(qr_code_path)
+
+        buffer = BytesIO()
+        img.save(buffer, format="PNG")
+        img_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        cursor.execute("UPDATE Students SET qrcode_out = ? WHERE telegramID = ?", (img_base64, telegram_id,))
+        conn.commit()
+
+        await bot.send_photo(message.chat.id, photo=FSInputFile(qr_code_path), caption="Ваш QR-код для выхода из университета.")
+    else:
+        await message.answer("Вы либо не зарегистрированы, либо уже вышли из университета.")
+    conn.close()
+
+# Сканирование QR-кода (вход или выход)
 @dp.message(F.content_type == types.ContentType.PHOTO)
 async def scan_qr(message: types.Message):
     photo = message.photo[-1]
@@ -97,38 +122,32 @@ async def scan_qr(message: types.Message):
         decoded_data = decode(img)
 
         if decoded_data:
-            # Попытка распознать данные QR-кода
             data = decoded_data[0].data.decode("utf-8")
+            action, telegram_id, timestamp = data.split("_")
+            telegram_id = int(telegram_id)
+            timestamp = int(timestamp)
 
-            try:
-                # Разделяем данные на telegram_id и entry_time
-                telegram_id, entry_time = data.split("_")
-                telegram_id = int(telegram_id)
-                entry_time = int(entry_time)
-            except ValueError:
-                await message.answer("Ошибка в формате данных QR-кода.")
-                return
-
-            # Проверяем время действия QR-кода
+            # Проверяем время действия QR-кода (5 минут)
             current_time = int(time.time())
-            duration = current_time - entry_time
-
-            if duration > 300:  # Если прошло больше 5 минут
+            if current_time - timestamp > 300:
                 await message.answer("QR-код просрочен или неверен.")
                 return
 
-            # Работа с базой данных
             conn = sqlite3.connect(db_file)
             cursor = conn.cursor()
-
             cursor.execute("SELECT * FROM Students WHERE telegramID = ?", (telegram_id,))
             user = cursor.fetchone()
 
             if user:
-                # Обновляем статус in_university
-                cursor.execute("UPDATE Students SET in_university = 1 WHERE telegramID = ?", (telegram_id,))
+                if action == "entry":
+                    cursor.execute("UPDATE Students SET in_university = 1 WHERE telegramID = ?", (telegram_id,))
+                    await message.answer("Ваш статус обновлен: вы вошли в университет.")
+                elif action == "exit" and user[4] == 1:
+                    cursor.execute("UPDATE Students SET in_university = 0 WHERE telegramID = ?", (telegram_id,))
+                    await message.answer("Ваш статус обновлен: вы вышли из университета.")
+                else:
+                    await message.answer("Действие некорректно. Возможно, вы не находитесь в университете.")
                 conn.commit()
-                await message.answer("Ваш статус обновлен: вы вошли в университет.")
             else:
                 await message.answer("Пользователь не найден.")
             conn.close()
@@ -137,22 +156,20 @@ async def scan_qr(message: types.Message):
     except Exception as e:
         await message.answer(f"Ошибка при обработке изображения: {e}")
 
-# Обработка данных QR-кода, отправленных текстом
-@dp.message(F.text.regexp(r"^\d+_\d+$"))  # Регулярное выражение для проверки формата
+@dp.message(F.text.regexp(r"^(entry|exit)_\d+_\d+$"))
 async def process_qr_text(message: types.Message):
     try:
         data = message.text
-        telegram_id, entry_time = map(int, data.split("_"))
+        action, telegram_id, timestamp = data.split("_")
+        telegram_id = int(telegram_id)
+        timestamp = int(timestamp)
 
-        # Проверяем время действия QR-кода
+        # Проверяем срок действия QR-кода
         current_time = int(time.time())
-        duration = current_time - entry_time
-
-        if duration > 300:  # Если прошло больше 5 минут
+        if current_time - timestamp > 300:
             await message.answer("QR-код просрочен или неверен.")
             return
 
-        # Работа с базой данных
         conn = sqlite3.connect(db_file)
         cursor = conn.cursor()
 
@@ -160,10 +177,51 @@ async def process_qr_text(message: types.Message):
         user = cursor.fetchone()
 
         if user:
-            # Обновляем статус in_university
-            cursor.execute("UPDATE Students SET in_university = 1 WHERE telegramID = ?", (telegram_id,))
-            conn.commit()
-            await message.answer("Ваш статус обновлен: вы вошли в университет.")
+            if action == "entry":
+                # Обновляем `time_in` и статус
+                cursor.execute("UPDATE Students SET time_in = ?, in_university = 1 WHERE telegramID = ?", (timestamp, telegram_id))
+                conn.commit()
+                await message.answer("Ваш статус обновлен: вы вошли в университет.")
+            elif action == "exit" and user[4] == 1:  # Убедимся, что студент уже в университете
+                # Получаем `time_in` для расчета
+                cursor.execute("SELECT time_in FROM Students WHERE telegramID = ?", (telegram_id,))
+                time_in = cursor.fetchone()[0]
+                if time_in:
+                    # Рассчитываем посещенные часы
+                    attended_hours = (timestamp - time_in) / 3600
+
+                    # Получаем недельную нагрузку из таблицы Schedule
+                    cursor.execute("""
+                        SELECT 
+                            COALESCE(Monday_hours, 0) + 
+                            COALESCE(Tuesday_hours, 0) + 
+                            COALESCE(Wednesday_hours, 0) + 
+                            COALESCE(Thursday_hours, 0) + 
+                            COALESCE(Friday_hours, 0) + 
+                            COALESCE(Saturday_hours, 0) 
+                        FROM Schedule
+                        LIMIT 1;
+                    """)
+                    weekly_hours = cursor.fetchone()[0]
+                    semester_weeks = 16  # Предположим, что семестр длится 16 недель
+                    semester_hours = weekly_hours * semester_weeks
+
+                    # Рассчитываем пропущенные часы
+                    skipped_hours = max(0, semester_hours - attended_hours)
+
+                    # Обновляем `time_out` и `skipped_hours`
+                    cursor.execute("""
+                        UPDATE Students 
+                        SET time_out = ?, in_university = 0, skipped_hours = skipped_hours + ? 
+                        WHERE telegramID = ?
+                    """, (timestamp, skipped_hours, telegram_id))
+                    conn.commit()
+
+                    await message.answer(f"Ваш статус обновлен: вы вышли из университета. Пропущенные часы обновлены.")
+                else:
+                    await message.answer("Ошибка: Время входа не найдено.")
+            else:
+                await message.answer("Действие некорректно. Возможно, вы не находитесь в университете.")
         else:
             await message.answer("Пользователь не найден.")
         conn.close()
@@ -171,33 +229,72 @@ async def process_qr_text(message: types.Message):
         await message.answer(f"Ошибка при обработке данных: {e}")
 
 
-from datetime import datetime
-
-# Обработка выхода (Exit University)
-@dp.message(F.text == "Exit University")
-async def exit_university(message: types.Message):
+@dp.message(F.text == "Статистика студента")
+async def student_statistics(message: types.Message):
     telegram_id = message.from_user.id
-
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
 
-    cursor.execute("SELECT * FROM Students WHERE telegramID = ?", (telegram_id,))
-    user = cursor.fetchone()
+    # Получаем расписание (часы за неделю)
+    cursor.execute("""
+        SELECT 
+            COALESCE(Monday_hours, 0) +
+            COALESCE(Tuesday_hours, 0) +
+            COALESCE(Wednesday_hours, 0) +
+            COALESCE(Thursday_hours, 0) +
+            COALESCE(Friday_hours, 0) +
+            COALESCE(Saturday_hours, 0) AS weekly_hours
+        FROM Schedule
+        LIMIT 1
+    """)
+    weekly_hours = cursor.fetchone()[0]
 
-    if user and user[4]:  # Проверяем, если студент уже в университете
-        # Если entry_time хранится как метка времени (int)
-        entry_time = datetime.fromtimestamp(user[5])  # Конвертируем из timestamp
-        duration = datetime.now() - entry_time
+    if not weekly_hours:
+        await message.answer("Ошибка: расписание не задано.")
+        return
 
-        # Обновляем статус выхода
-        cursor.execute("UPDATE Students SET in_university = 0 WHERE telegramID = ?", (telegram_id,))
-        conn.commit()
+    semester_weeks = 16  # Допустим, семестр длится 16 недель
+    semester_hours = weekly_hours * semester_weeks
 
-        await message.answer(f"Вы провели в университете {duration.total_seconds() // 3600:.0f} часов.")
-    else:
-        await message.answer("Вы не в университете или не зарегистрированы.")
-
+    # Получаем данные студента
+    cursor.execute("""
+        SELECT time_in, time_out, skipped_hours 
+        FROM Students 
+        WHERE telegramID = ?
+    """, (telegram_id,))
+    student_data = cursor.fetchone()
     conn.close()
+
+    if not student_data:
+        await message.answer("Данные о студенте не найдены.")
+        return
+
+    time_in, time_out, skipped_hours = student_data
+
+    # Преобразуем временные метки в читаемый формат
+    time_in_readable = datetime.fromtimestamp(time_in).strftime('%Y-%m-%d %H:%M:%S') if time_in else "Не зафиксировано"
+    time_out_readable = datetime.fromtimestamp(time_out).strftime('%Y-%m-%d %H:%M:%S') if time_out else "Не зафиксировано"
+
+    # Рассчитаем посещенные часы
+    attended_hours = 0
+    if time_in and time_out:
+        attended_hours = (time_out - time_in) / 3600  # Часы посещения
+
+    # Пропущенные часы
+    missed_hours = semester_hours - attended_hours
+
+    # Формируем сообщение со статистикой
+    stats_message = (
+        f"📊  Статистика студента:\n\n"
+        f"🕒  Время входа: {time_in_readable}\n"
+        f"🕒  Время выхода: {time_out_readable}\n"
+        f"✅  Посещено часов: {attended_hours:.2f}\n"
+        f"❌  Пропущено часов: {missed_hours:.2f}\n"
+        f"📅  Всего часов в неделю: {weekly_hours:.2f}\n"
+        f"📅  Всего часов за семестр: {semester_hours:.2f}\n"
+    )
+
+    await message.answer(stats_message)
 
 
 if __name__ == "__main__":

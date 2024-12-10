@@ -3,3 +3,6 @@ pillow
 qrcode
 pyzbar
 aiofiles
+pandas
+openpyxl
+requests
