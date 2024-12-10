@@ -5,4 +5,3 @@ pyzbar
 aiofiles
 pandas
 openpyxl
-requests

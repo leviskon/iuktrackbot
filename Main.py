@@ -27,19 +27,21 @@ kb = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# Обработка команды Get ID
-@dp.message(F.text == "Get ID")
-async def get_id(message: types.Message):
-    telegram_id = message.from_user.id
-    await message.answer(f"Ваш Telegram ID: {telegram_id}")
-
 # Подключение к базе данных
 db_file = "university.db"
+
 
 # Команда /start
 @dp.message(Command("start"))
 async def start(message: types.Message):
     await message.answer("Добро пожаловать! Выберите действие:", reply_markup=kb)
+
+
+# Обработка команды Get ID
+@dp.message(F.text == "Get ID")
+async def get_id(message: types.Message):
+    telegram_id = message.from_user.id
+    await message.answer(f"Ваш Telegram ID: {telegram_id}")
 
 
 # Генерация QR-кода для входа
@@ -70,10 +72,12 @@ async def generate_entry_qr_code(message: types.Message):
         cursor.execute("UPDATE Students SET qrcode_in = ? WHERE telegramID = ?", (img_base64, telegram_id,))
         conn.commit()
 
-        await bot.send_photo(message.chat.id, photo=FSInputFile(qr_code_path), caption="Ваш QR-код для входа в университет.")
+        await bot.send_photo(message.chat.id, photo=FSInputFile(qr_code_path),
+                             caption="Ваш QR-код для входа в университет.")
     else:
         await message.answer("Вы не зарегистрированы в системе.")
     conn.close()
+
 
 # Генерация QR-кода для выхода
 @dp.message(F.text == "QR Code для выхода")
@@ -103,10 +107,12 @@ async def generate_exit_qr_code(message: types.Message):
         cursor.execute("UPDATE Students SET qrcode_out = ? WHERE telegramID = ?", (img_base64, telegram_id,))
         conn.commit()
 
-        await bot.send_photo(message.chat.id, photo=FSInputFile(qr_code_path), caption="Ваш QR-код для выхода из университета.")
+        await bot.send_photo(message.chat.id, photo=FSInputFile(qr_code_path),
+                             caption="Ваш QR-код для выхода из университета.")
     else:
         await message.answer("Вы либо не зарегистрированы, либо уже вышли из университета.")
     conn.close()
+
 
 # Сканирование QR-кода (вход или выход)
 @dp.message(F.content_type == types.ContentType.PHOTO)
@@ -156,6 +162,7 @@ async def scan_qr(message: types.Message):
     except Exception as e:
         await message.answer(f"Ошибка при обработке изображения: {e}")
 
+
 @dp.message(F.text.regexp(r"^(entry|exit)_\d+_\d+$"))
 async def process_qr_text(message: types.Message):
     try:
@@ -179,7 +186,8 @@ async def process_qr_text(message: types.Message):
         if user:
             if action == "entry":
                 # Обновляем `time_in` и статус
-                cursor.execute("UPDATE Students SET time_in = ?, in_university = 1 WHERE telegramID = ?", (timestamp, telegram_id))
+                cursor.execute("UPDATE Students SET time_in = ?, in_university = 1 WHERE telegramID = ?",
+                               (timestamp, telegram_id))
                 conn.commit()
                 await message.answer("Ваш статус обновлен: вы вошли в университет.")
             elif action == "exit" and user[4] == 1:  # Убедимся, что студент уже в университете
@@ -191,7 +199,7 @@ async def process_qr_text(message: types.Message):
                     attended_hours = (timestamp - time_in) / 3600
 
                     # Получаем недельную нагрузку из таблицы Schedule
-                    cursor.execute("""
+                    cursor.execute(""" 
                         SELECT 
                             COALESCE(Monday_hours, 0) + 
                             COALESCE(Tuesday_hours, 0) + 
@@ -273,7 +281,8 @@ async def student_statistics(message: types.Message):
 
     # Преобразуем временные метки в читаемый формат
     time_in_readable = datetime.fromtimestamp(time_in).strftime('%Y-%m-%d %H:%M:%S') if time_in else "Не зафиксировано"
-    time_out_readable = datetime.fromtimestamp(time_out).strftime('%Y-%m-%d %H:%M:%S') if time_out else "Не зафиксировано"
+    time_out_readable = datetime.fromtimestamp(time_out).strftime(
+        '%Y-%m-%d %H:%M:%S') if time_out else "Не зафиксировано"
 
     # Рассчитаем посещенные часы
     attended_hours = 0
@@ -285,16 +294,28 @@ async def student_statistics(message: types.Message):
 
     # Формируем сообщение со статистикой
     stats_message = (
-        f"📊  Статистика студента:\n\n"
-        f"🕒  Время входа: {time_in_readable}\n"
-        f"🕒  Время выхода: {time_out_readable}\n"
-        f"✅  Посещено часов: {attended_hours:.2f}\n"
-        f"❌  Пропущено часов: {missed_hours:.2f}\n"
-        f"📅  Всего часов в неделю: {weekly_hours:.2f}\n"
-        f"📅  Всего часов за семестр: {semester_hours:.2f}\n"
+        f"📊 Статистика студента:\n\n"
+        f"🕒 Время входа: {time_in_readable}\n"
+        f"🕒 Время выхода: {time_out_readable}\n"
+        f"✅ Посещено часов: {attended_hours:.2f}\n"
+        f"❌ Пропущено часов: {missed_hours:.2f}\n"
+        f"📅 Всего часов в неделю: {weekly_hours:.2f}\n"
+        f"📅 Всего часов за семестр: {semester_hours:.2f}\n"
     )
 
     await message.answer(stats_message)
+
+
+# Обработка команды /report для генерации отчета
+@dp.message(Command("report"))
+async def report(message: types.Message):
+    # Импортируем генерирование отчета только при вызове команды
+    import gen_excel
+
+    # Вызываем функцию для генерации отчета (предположим, что она есть в модуле gen_excel)
+    await message.answer("Генерация отчета...")
+    gen_excel.generate_report()  # Например, вызов функции из модуля gen_excel
+    await message.answer("Отчет сгенерирован.")
 
 
 if __name__ == "__main__":
